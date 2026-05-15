@@ -20,13 +20,20 @@ let tokenExpiryTime = 0;
 async function getAccessToken() {
     console.log('🔄 Getting access token...');
     try {
+        // URL encode the client_id and client_secret to handle special characters
+        const encodedClientId = encodeURIComponent(CLIENT_ID);
+        const encodedClientSecret = encodeURIComponent(CLIENT_SECRET);
+        
         const response = await axios.post(TOKEN_URL, 
-            `client_id=${CLIENT_ID}&client_secret=${CLIENT_SECRET}`,
-            { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+            `client_id=${encodedClientId}&client_secret=${encodedClientSecret}`,
+            { 
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                timeout: 30000
+            }
         );
         currentAccessToken = response.data.access_token;
         tokenExpiryTime = Date.now() + (response.data.expires_in - 60) * 1000;
-        console.log('✅ Token obtained');
+        console.log('✅ Token obtained successfully');
         return currentAccessToken;
     } catch (error) {
         console.error('❌ Token error:', error.response?.data || error.message);
@@ -46,7 +53,7 @@ async function ensureAuth(req, res, next) {
         req.authToken = await getValidToken();
         next();
     } catch (error) {
-        res.status(500).json({ error: 'Auth failed' });
+        res.status(500).json({ error: 'Auth failed', details: error.message });
     }
 }
 
@@ -118,22 +125,6 @@ app.get('/api/live/events', ensureAuth, async (req, res) => {
     }
 });
 
-app.get('/api/results/sports', ensureAuth, async (req, res) => {
-    const { dateFrom, dateTo } = req.query;
-    if (!dateFrom || !dateTo) {
-        return res.status(400).json({ error: 'dateFrom and dateTo required' });
-    }
-    try {
-        const response = await axios.get(`${BASE_URL}/result/api/v1/sports`, {
-            params: { ref: REF, dateFrom, dateTo, lng: req.query.lng || 'en' },
-            headers: { Authorization: `Bearer ${req.authToken}` }
-        });
-        res.json(response.data);
-    } catch (error) {
-        res.status(error.response?.status || 500).json({ error: error.response?.data || error.message });
-    }
-});
-
 app.get('/api/tree/sports', ensureAuth, async (req, res) => {
     try {
         const response = await axios.get(`${BASE_URL}/datafeed/loadtree/prematch/api/v1/sportList`, {
@@ -187,4 +178,3 @@ app.get('/api/tree/event-detail', ensureAuth, async (req, res) => {
 app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
 });
-
