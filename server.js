@@ -60,7 +60,7 @@ app.get('/', (req, res) => {
     res.json({ status: 'running', message: 'Sports API Proxy is working!' });
 });
 
-// Get all sports - NO LIMIT
+// Get all sports
 app.get('/api/sports', ensureAuth, async (req, res) => {
     try {
         const response = await axios.get(`${BASE_URL}/datafeed/directories/api/v2/sports`, {
@@ -73,20 +73,17 @@ app.get('/api/sports', ensureAuth, async (req, res) => {
     }
 });
 
-// Get pre-match events - INCREASED LIMIT to 500
+// Get pre-match events - 500 events
 app.get('/api/prematch/events', ensureAuth, async (req, res) => {
-    const { sportIds, tournamentIds, periods, types, vids } = req.query;
+    const { sportIds, tournamentIds } = req.query;
     try {
         let params = { 
             ref: REF, 
             lng: req.query.lng || 'en',
-            count: 500  // Increased from default 100 to 500
+            count: 500
         };
         if (sportIds) params.sportIds = sportIds;
         if (tournamentIds) params.tournamentIds = tournamentIds;
-        if (periods) params.periods = periods;
-        if (types) params.types = types;
-        if (vids) params.vids = vids;
         
         const response = await axios.get(`${BASE_URL}/datafeed/prematch/api/v2/sportevents`, {
             params,
@@ -98,7 +95,7 @@ app.get('/api/prematch/events', ensureAuth, async (req, res) => {
     }
 });
 
-// Get odds for specific sport events - NO LIMIT
+// Get odds for specific sport events
 app.get('/api/prematch/odds', ensureAuth, async (req, res) => {
     const { sportEventIds } = req.query;
     if (!sportEventIds) {
@@ -120,7 +117,7 @@ app.get('/api/prematch/odds', ensureAuth, async (req, res) => {
     }
 });
 
-// Get live events - INCREASED LIMIT
+// Get live events
 app.get('/api/live/events', ensureAuth, async (req, res) => {
     const { sportIds } = req.query;
     try {
@@ -140,7 +137,7 @@ app.get('/api/live/events', ensureAuth, async (req, res) => {
     }
 });
 
-// Get results - EXPANDED DATE RANGE (max 48 hours as per API limits)
+// Get results
 app.get('/api/results/sports', ensureAuth, async (req, res) => {
     const { dateFrom, dateTo } = req.query;
     if (!dateFrom || !dateTo) {
@@ -174,7 +171,7 @@ app.get('/api/results/by-tournament', ensureAuth, async (req, res) => {
     }
 });
 
-// Get actual sports (LoadTree) - NO LIMIT
+// Get actual sports (LoadTree)
 app.get('/api/tree/sports', ensureAuth, async (req, res) => {
     try {
         const response = await axios.get(`${BASE_URL}/datafeed/loadtree/prematch/api/v1/sportList`, {
@@ -187,7 +184,7 @@ app.get('/api/tree/sports', ensureAuth, async (req, res) => {
     }
 });
 
-// Get tournaments by sport ID - INCREASED LIMIT
+// Get tournaments by sport ID
 app.get('/api/tree/tournaments', ensureAuth, async (req, res) => {
     const { sportId } = req.query;
     if (!sportId) {
@@ -198,7 +195,7 @@ app.get('/api/tree/tournaments', ensureAuth, async (req, res) => {
             ref: REF, 
             sportId, 
             lng: req.query.lng || 'en',
-            count: 500  // Get more tournaments
+            count: 500
         };
         const response = await axios.get(`${BASE_URL}/datafeed/loadtree/prematch/api/v1/tournaments`, {
             params,
@@ -227,7 +224,7 @@ app.get('/api/tree/events', ensureAuth, async (req, res) => {
     }
 });
 
-// Get event details with markets
+// Get event details with markets and subGames
 app.get('/api/tree/event-detail', ensureAuth, async (req, res) => {
     const { sportEventId, withSubGames } = req.query;
     if (!sportEventId) {
@@ -250,15 +247,51 @@ app.get('/api/tree/event-detail', ensureAuth, async (req, res) => {
     }
 });
 
-// Get H2H statistics
+// ============ STATISTICS ENDPOINTS ============
+
+// Get H2H statistics (Head-to-Head)
 app.get('/api/statistics/h2h', ensureAuth, async (req, res) => {
     const { statEventId } = req.query;
     if (!statEventId) {
         return res.status(400).json({ error: 'statEventId required' });
     }
     try {
-        const response = await axios.get(`https://cpservm.com/gateway/marketing/statistics/sportevent/h2h`, {
-            params: { statEventId, ref: REF, lng: req.query.lng || 'en' },
+        const response = await axios.get(`${BASE_URL}/statistics/sportevent/h2h`, {
+            params: { statEventId, ref: REF, lng: req.query.lng || 'en', gr: 0, cnt: 0 },
+            headers: { Authorization: `Bearer ${req.authToken}` }
+        });
+        res.json(response.data);
+    } catch (error) {
+        res.status(error.response?.status || 500).json({ error: error.response?.data || error.message });
+    }
+});
+
+// Get overall game statistics
+app.get('/api/statistics/game', ensureAuth, async (req, res) => {
+    const { statEventId } = req.query;
+    if (!statEventId) {
+        return res.status(400).json({ error: 'statEventId required' });
+    }
+    try {
+        const response = await axios.get(`${BASE_URL}/statistics/sportevent/game`, {
+            params: { statEventId, ref: REF, lng: req.query.lng || 'en', gr: 0, cnt: 0 },
+            headers: { Authorization: `Bearer ${req.authToken}` }
+        });
+        res.json(response.data);
+    } catch (error) {
+        res.status(error.response?.status || 500).json({ error: error.response?.data || error.message });
+    }
+});
+
+// Get stage statistics (league table / tournament bracket)
+app.get('/api/statistics/stage', ensureAuth, async (req, res) => {
+    const { statEventId } = req.query;
+    if (!statEventId) {
+        return res.status(400).json({ error: 'statEventId required' });
+    }
+    try {
+        const response = await axios.get(`${BASE_URL}/statistics/sportevent/stage`, {
+            params: { statEventId, ref: REF, lng: req.query.lng || 'en', gr: 0, cnt: 0 },
             headers: { Authorization: `Bearer ${req.authToken}` }
         });
         res.json(response.data);
@@ -269,5 +302,5 @@ app.get('/api/statistics/h2h', ensureAuth, async (req, res) => {
 
 app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`📍 Maximum events per request: 500`);
+    console.log(`📍 Stats endpoints: /api/statistics/h2h, /api/statistics/game, /api/statistics/stage`);
 });
