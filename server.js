@@ -75,7 +75,7 @@ async function ensureAuth(req, res, next) {
 async function fetchMatches(dateRange) {
     try {
         const response = await axios.get(`${BASE_URL}/datafeed/prematch/api/v2/sportevents`, {
-            params: { ref: REF, lng: 'en', sportIds: 1, count: 200 },
+            params: { ref: REF, lng: 'en', sportIds: 1, count: 300 },
             headers: { Authorization: `Bearer ${await getValidToken()}` }
         });
         const allMatches = response.data.items || [];
@@ -127,7 +127,7 @@ function getOddsByType(oddsList, type, subType = null) {
 function getAnyOddsInRange(oddsList, minOdds, maxOdds) {
     const validOdds = oddsList.filter(o => 
         o.oddsMarket >= minOdds && o.oddsMarket <= maxOdds && 
-        ![2, 180, 181, 731].includes(o.type) // exclude draw, BTTS, correct score from any category
+        ![2, 180, 181, 731].includes(o.type)
     );
     if (validOdds.length) {
         return validOdds[0];
@@ -137,19 +137,26 @@ function getAnyOddsInRange(oddsList, minOdds, maxOdds) {
 
 async function generateTipsForTomorrow() {
     console.log('🌙 Starting midnight tip generation...');
+    console.log(`⏰ Kenya time: ${new Date().toLocaleString('en-KE', { timeZone: 'Africa/Nairobi' })}`);
     
-    // Get tomorrow's date range
-    const now = new Date();
-    const tomorrow = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate() + 1));
-    const tomorrowStart = Math.floor(tomorrow.getTime() / 1000);
-    const tomorrowEnd = tomorrowStart + 86400;
+    // Get tomorrow's date range (Kenya time)
+    const nowKenya = new Date(new Date().toLocaleString('en-US', { timeZone: 'Africa/Nairobi' }));
+    const tomorrowKenya = new Date(nowKenya);
+    tomorrowKenya.setDate(tomorrowKenya.getDate() + 1);
+    tomorrowKenya.setHours(0, 0, 0, 0);
     
-    const matches = await fetchMatches({ start: tomorrowStart, end: tomorrowEnd });
+    // Convert to UTC timestamps for API
+    const tomorrowStartUTC = Math.floor(tomorrowKenya.getTime() / 1000);
+    const tomorrowEndUTC = tomorrowStartUTC + 86400;
+    
+    console.log(`📅 Target date: ${tomorrowKenya.toISOString().split('T')[0]}`);
+    
+    const matches = await fetchMatches({ start: tomorrowStartUTC, end: tomorrowEndUTC });
     console.log(`📊 Found ${matches.length} matches for tomorrow`);
     
     if (matches.length === 0) {
         console.log('⚠️ No matches found for tomorrow');
-        return;
+        return null;
     }
     
     // Fetch odds for all matches
@@ -186,12 +193,10 @@ async function generateTipsForTomorrow() {
                     });
                 }
             }
-            // Sort by odds ascending and pick smallest
             allTips.sort((a, b) => parseFloat(a.odds) - parseFloat(b.odds));
             tips[catName] = allTips.slice(0, targetCount);
         } 
         else if (config.market === 'btts') {
-            // BTTS specific
             const bttsTips = [];
             for (const match of matchesWithOdds) {
                 const odd = getOddsByType(match.odds, 'btts');
@@ -209,12 +214,10 @@ async function generateTipsForTomorrow() {
                     });
                 }
             }
-            // Randomly pick tips within range
             const shuffled = bttsTips.sort(() => 0.5 - Math.random());
             tips[catName] = shuffled.slice(0, targetCount);
         }
         else if (config.market === 'overunder') {
-            // Over/Under specific
             const ouTips = [];
             for (const match of matchesWithOdds) {
                 const odd = getOddsByType(match.odds, 'overunder');
@@ -265,48 +268,23 @@ async function generateTipsForTomorrow() {
     return tips;
 }
 
-// ============ UPDATE RESULTS FOR PAST GAMES ============
-async function updateResults(category, predictions) {
-    let updated = false;
-    for (let i = 0; i < predictions.length; i++) {
-        const pred = predictions[i];
-        if (pred.status !== '🟡 Pending') continue;
-        
-        try {
-            const response = await axios.get(`${BASE_URL}/result/api/v1/sportevent`, {
-                params: { ref: REF, lng: 'en', sportEventIds: pred.eventId },
-                headers: { Authorization: `Bearer ${await getValidToken()}` }
-            });
-            const result = response.data.items?.[0];
-            if (result && result.score) {
-                pred.results = result.score;
-                // Determine if tip won or lost (simplified - admin can adjust)
-                pred.status = '🟢 Won'; // Default to Won, admin can change
-                updated = true;
-                console.log(`📊 Updated ${pred.match}: ${result.score}`);
-            }
-        } catch (error) {
-            // No result yet
-        }
-        await new Promise(r => setTimeout(r, 100));
-    }
-    return updated;
-}
-
-// ============ MIDNIGHT CRON JOB ============
+// ============ MIDNIGHT CRON JOB (Kenya Time 12:00 AM) ============
 async function midnightAutomation() {
     console.log('========================================');
     console.log('🌙 MIDNIGHT AUTOMATION STARTED');
-    console.log(`⏰ Time: ${new Date().toISOString()}`);
+    console.log(`⏰ Kenya time: ${new Date().toLocaleString('en-KE', { timeZone: 'Africa/Nairobi' })}`);
     console.log('========================================');
     
     try {
-        // Generate new tips for tomorrow
         const newTips = await generateTipsForTomorrow();
         
-        // Here you would save to your Firebase
-        // This depends on your Firebase structure
-        console.log('📝 Tips ready to save to Firebase');
+        if (newTips) {
+            console.log('📝 Tips generated successfully');
+            console.log('📊 Summary:');
+            for (const [cat, tips] of Object.entries(newTips)) {
+                console.log(`   - ${cat}: ${tips.length} tips`);
+            }
+        }
         
         console.log('========================================');
         console.log('✅ MIDNIGHT AUTOMATION COMPLETED');
@@ -317,16 +295,16 @@ async function midnightAutomation() {
     }
 }
 
-// Schedule cron job - runs at midnight (00:00) UTC
-// 0 0 * * * = every day at midnight UTC (3 AM Kenya time)
-cron.schedule('0 0 * * *', () => {
+// Schedule cron job - runs at midnight Kenya time (21:00 UTC)
+// 0 21 * * * = 21:00 UTC = 00:00 Kenya time (UTC+3)
+cron.schedule('0 21 * * *', () => {
     midnightAutomation();
 }, {
     scheduled: true,
-    timezone: "UTC"
+    timezone: "Africa/Nairobi"
 });
 
-console.log('⏰ Cron job scheduled: Daily at midnight UTC');
+console.log('⏰ Cron job scheduled: Daily at midnight Kenya time (21:00 UTC)');
 
 // ============ API ENDPOINTS ============
 
@@ -334,7 +312,8 @@ app.get('/', (req, res) => {
     res.json({ 
         status: 'running', 
         message: 'Sports API Proxy is working!',
-        automation: 'Daily at midnight UTC',
+        automation: 'Daily at midnight Kenya time',
+        currentKenyaTime: new Date().toLocaleString('en-KE', { timeZone: 'Africa/Nairobi' }),
         categories: Object.keys(CATEGORIES)
     });
 });
@@ -342,7 +321,7 @@ app.get('/', (req, res) => {
 // Manual trigger for testing
 app.get('/api/manual-generate', ensureAuth, async (req, res) => {
     const tips = await generateTipsForTomorrow();
-    res.json({ success: true, tips });
+    res.json({ success: true, tips, message: 'Tips generated. Save to Firebase manually.' });
 });
 
 // Get pre-match events
@@ -401,51 +380,58 @@ app.get('/api/results/sportevent', ensureAuth, async (req, res) => {
     }
 });
 
-// Get today's matches
+// Get today's matches (Kenya date)
 app.get('/api/matches/today', ensureAuth, async (req, res) => {
     try {
-        const now = new Date();
-        const todayStart = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+        const nowKenya = new Date(new Date().toLocaleString('en-US', { timeZone: 'Africa/Nairobi' }));
+        const todayStart = new Date(nowKenya);
+        todayStart.setHours(0, 0, 0, 0);
         const todayEnd = new Date(todayStart);
-        todayEnd.setUTCDate(todayEnd.getUTCDate() + 1);
+        todayEnd.setDate(todayEnd.getDate() + 1);
+        
+        const startUTC = Math.floor(todayStart.getTime() / 1000);
+        const endUTC = Math.floor(todayEnd.getTime() / 1000);
         
         const response = await axios.get(`${BASE_URL}/datafeed/prematch/api/v2/sportevents`, {
-            params: { ref: REF, lng: 'en', sportIds: 1, count: 200 },
+            params: { ref: REF, lng: 'en', sportIds: 1, count: 300 },
             headers: { Authorization: `Bearer ${req.authToken}` }
         });
         
         const allEvents = response.data.items || [];
         const todayEvents = allEvents.filter(event => 
-            event.startDate >= Math.floor(todayStart.getTime() / 1000) && 
-            event.startDate < Math.floor(todayEnd.getTime() / 1000)
+            event.startDate >= startUTC && event.startDate < endUTC
         );
         
-        res.json({ count: todayEvents.length, items: todayEvents });
+        res.json({ date: todayStart.toISOString().split('T')[0], count: todayEvents.length, items: todayEvents });
     } catch (error) {
         res.status(error.response?.status || 500).json({ error: error.response?.data || error.message });
     }
 });
 
-// Get tomorrow's matches
+// Get tomorrow's matches (Kenya date)
 app.get('/api/matches/tomorrow', ensureAuth, async (req, res) => {
     try {
-        const now = new Date();
-        const tomorrowStart = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate() + 1));
+        const nowKenya = new Date(new Date().toLocaleString('en-US', { timeZone: 'Africa/Nairobi' }));
+        const tomorrowStart = new Date(nowKenya);
+        tomorrowStart.setDate(tomorrowStart.getDate() + 1);
+        tomorrowStart.setHours(0, 0, 0, 0);
         const tomorrowEnd = new Date(tomorrowStart);
-        tomorrowEnd.setUTCDate(tomorrowEnd.getUTCDate() + 1);
+        tomorrowEnd.setDate(tomorrowEnd.getDate() + 1);
+        
+        const startUTC = Math.floor(tomorrowStart.getTime() / 1000);
+        const endUTC = Math.floor(tomorrowEnd.getTime() / 1000);
         
         const response = await axios.get(`${BASE_URL}/datafeed/prematch/api/v2/sportevents`, {
-            params: { ref: REF, lng: 'en', sportIds: 1, count: 200 },
+            params: { ref: REF, lng: 'en', sportIds: 1, count: 300 },
             headers: { Authorization: `Bearer ${req.authToken}` }
         });
         
         const allEvents = response.data.items || [];
         const tomorrowEvents = allEvents.filter(event => 
-            event.startDate >= Math.floor(tomorrowStart.getTime() / 1000) && 
-            event.startDate < Math.floor(tomorrowEnd.getTime() / 1000)
+            event.startDate >= startUTC && event.startDate < endUTC
         );
         
-        res.json({ count: tomorrowEvents.length, items: tomorrowEvents });
+        res.json({ date: tomorrowStart.toISOString().split('T')[0], count: tomorrowEvents.length, items: tomorrowEvents });
     } catch (error) {
         res.status(error.response?.status || 500).json({ error: error.response?.data || error.message });
     }
@@ -466,10 +452,8 @@ app.get('/api/tree/sports', ensureAuth, async (req, res) => {
 // Start server
 app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`⏰ Cron job scheduled: Daily at midnight UTC`);
+    console.log(`⏰ Cron job scheduled: Daily at midnight Kenya time (21:00 UTC)`);
+    console.log(`📍 Current Kenya time: ${new Date().toLocaleString('en-KE', { timeZone: 'Africa/Nairobi' })}`);
     console.log(`📋 Categories: ${Object.keys(CATEGORIES).join(', ')}`);
     console.log(`📍 Manual trigger: /api/manual-generate`);
 });
-
-// Run once on startup (optional - comment out if not needed)
-// setTimeout(() => midnightAutomation(), 10000);
